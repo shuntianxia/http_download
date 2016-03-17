@@ -45,6 +45,7 @@ static int reconnected_status = 0;
 static url_info_t url_info;
 static char g_buf_send[10*1024];//发送数据暂存区
 static char g_buf_recv[10*1024];//接收数据暂存区
+static queue_t queue;
 
 static wiced_uart_config_t uart_config =
 {
@@ -454,7 +455,7 @@ int http_get_filesize(wiced_tcp_socket_t* socket, char *path)
         return ret;
 }
 
-int http_get_file(wiced_tcp_socket_t* socket, url_info_t *url_info)
+int http_get_file_bak(wiced_tcp_socket_t* socket, url_info_t *url_info)
 {
     int count;
     char range[32];
@@ -558,6 +559,76 @@ int http_get_file(wiced_tcp_socket_t* socket, url_info_t *url_info)
     return 0;
 }
 
+int http_get_file(wiced_tcp_socket_t* socket, url_info_t *url_info)
+{
+    int count;
+    char range[32];
+	char buf[64];
+    int i;
+    int j = 0;//成功下载次数
+    int ret = -1;
+    char *p = NULL;
+
+	//Uart file transfer start
+	memset(g_buf_send, 0x0, sizeof(g_buf_send));		   
+	sprintf(g_buf_send, "Start\nFile-Name: %s\n", url_info->filename);
+	sprintf(g_buf_send + strlen(g_buf_send), "File-Size: %d\n", url_info->filesize);
+	printf("%s", g_buf_send);
+	wiced_uart_transmit_bytes( WICED_UART_2, g_buf_send, 64);
+	//host_rtos_delay_milliseconds( 3000 );
+
+	memset(g_buf_send, 0x0, sizeof(g_buf_send));		   
+	sprintf(g_buf_send, "GET %s",url_info->filepath);
+	strcat(g_buf_send," HTTP/1.1\r\n");
+	strcat(g_buf_send, "Host: ");
+	strcat(g_buf_send, url_info->host);
+	strcat(g_buf_send, ":");
+	strcat(g_buf_send, url_info->port);
+	strcat(g_buf_send, "\r\nKeep-Alive: 200");
+	strcat(g_buf_send,"\r\nConnection: Keep-Alive\r\n\r\n");
+	
+	//wiced_tcp_send_buffer(socket, g_buf_send, strlen(g_buf_send));
+	tcp_send_data(socket,g_buf_send,strlen(g_buf_send));
+
+    for(i=0;i<count;i++)
+    {
+        ret = http_recv(socket, g_buf_recv);
+
+        if(ret < 0 )
+        {
+            tcp_connect(&tcp_client_socket, &url_info->ip_addr, url_info->port);
+             i--;
+            continue;
+        }
+        p = strstr(g_buf_recv,"\r\n\r\n");
+        if(p == NULL)
+        {
+            printf("ERR:g_buf_recv not contain end flag\n");
+            //break;
+            return -1;
+        }
+		else
+        {
+			//memcpy(filebuf+j*MAX_RECV_SIZE,p+4,ret -(p+4-g_buf_recv));
+			WPRINT_APP_INFO(("send download data via uart ...\n\n"));
+
+			memset(g_buf_send, 0x0, sizeof(g_buf_send));
+			sprintf(g_buf_send, "Length: %d\n", ret -(p+4-g_buf_recv));
+			printf("%s", g_buf_send);
+			//wiced_uart_transmit_bytes( WICED_UART_2, g_buf_send, 32);
+			memcpy(g_buf_send + 32, p + 4, ret -(p+4-g_buf_recv));
+			wiced_uart_transmit_bytes( WICED_UART_2, g_buf_send + 32, ret -(p+4-g_buf_recv));
+			//memset(g_buf_send, 0x0, sizeof(g_buf_send));
+			//wiced_uart_transmit_bytes( WICED_UART_2, g_buf_send, 2000);
+			
+			//wiced_uart_transmit_bytes( WICED_UART_2, p+4, ret -(p+4-g_buf_recv));
+			printf("ret -(p+4-g_buf_recv) = %d\n", ret -(p+4-g_buf_recv));
+			j++;
+        }
+    }
+    return 0;
+}
+
 int http_download(char *url)
 {
 	int file_size;
@@ -625,4 +696,5 @@ void application_start(void)
 		wiced_uart_transmit_bytes( WICED_UART_2, buf, 1);
 		printf("buf[0] is %d\n", buf[0]);
 	}*/
+	//wiced_rtos_create_thread(&uart_thread, WICED_NETWORK_WORKER_PRIORITY, "uart receive thread", function, UART_RECEIVE_STACK_SIZE, 0);
 }
